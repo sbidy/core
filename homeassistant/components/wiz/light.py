@@ -29,18 +29,23 @@ from .models import WizData
 RGB_WHITE_CHANNELS_COLOR_MODE = {1: ColorMode.RGBW, 2: ColorMode.RGBWW}
 
 
-def _async_pilot_builder(**kwargs: Any) -> PilotBuilder:
+def _async_pilot_builder(channel, **kwargs: Any) -> PilotBuilder:
     """Create the PilotBuilder for turn on."""
     brightness = kwargs.get(ATTR_BRIGHTNESS)
 
     if ATTR_RGBWW_COLOR in kwargs:
-        return PilotBuilder(brightness=brightness, rgbww=kwargs[ATTR_RGBWW_COLOR])
+        return PilotBuilder(
+            device=channel, brightness=brightness, rgbww=kwargs[ATTR_RGBWW_COLOR]
+        )
 
     if ATTR_RGBW_COLOR in kwargs:
-        return PilotBuilder(brightness=brightness, rgbw=kwargs[ATTR_RGBW_COLOR])
+        return PilotBuilder(
+            device=channel, brightness=brightness, rgbw=kwargs[ATTR_RGBW_COLOR]
+        )
 
     if ATTR_COLOR_TEMP_KELVIN in kwargs:
         return PilotBuilder(
+            device=channel,
             brightness=brightness,
             colortemp=kwargs[ATTR_COLOR_TEMP_KELVIN],
         )
@@ -49,9 +54,9 @@ def _async_pilot_builder(**kwargs: Any) -> PilotBuilder:
         scene_id = get_id_from_scene_name(kwargs[ATTR_EFFECT])
         if scene_id == 1000:  # rhythm
             return PilotBuilder()
-        return PilotBuilder(brightness=brightness, scene=scene_id)
+        return PilotBuilder(device=channel, brightness=brightness, scene=scene_id)
 
-    return PilotBuilder(brightness=brightness)
+    return PilotBuilder(device=channel, brightness=brightness)
 
 
 async def async_setup_entry(
@@ -61,7 +66,16 @@ async def async_setup_entry(
 ) -> None:
     """Set up the WiZ Platform from config_flow."""
     if entry.runtime_data.bulb.bulbtype.bulb_type != BulbClass.SOCKET:
-        async_add_entities([WizBulbEntity(entry.runtime_data, entry.title)])
+        # Check if bulb is a dual head
+        if entry.runtime_data.bulb.bulbtype.features.dual_head:
+            async_add_entities(
+                [
+                    WizBulbEntity(entry.runtime_data, entry.title + " - 1", channel=0),
+                    WizBulbEntity(entry.runtime_data, entry.title + " - 2", channel=1),
+                ]
+            )
+        else:
+            async_add_entities([WizBulbEntity(entry.runtime_data, entry.title)])
 
 
 class WizBulbEntity(WizToggleEntity, LightEntity):
@@ -70,12 +84,13 @@ class WizBulbEntity(WizToggleEntity, LightEntity):
     _attr_name = None
     _fixed_color_mode: ColorMode | None = None
 
-    def __init__(self, wiz_data: WizData, name: str) -> None:
+    def __init__(self, wiz_data: WizData, name: str, channel: int = 0) -> None:
         """Initialize an WiZLight."""
         super().__init__(wiz_data, name)
         bulb_type: BulbType = self._device.bulbtype
         features: Features = bulb_type.features
         color_modes = {ColorMode.ONOFF}
+        self._channel = channel
         if features.color:
             color_modes.add(RGB_WHITE_CHANNELS_COLOR_MODE[bulb_type.white_channels])
         if features.color_tmp:
@@ -98,11 +113,13 @@ class WizBulbEntity(WizToggleEntity, LightEntity):
     @callback
     def _async_update_attrs(self) -> None:
         """Handle updating _attr values."""
-        state = self._device.state
+        state = self._device.state[self._channel]  # Use the correct channel state
         color_modes = self.supported_color_modes
         assert color_modes is not None
+
         if (brightness := state.get_brightness()) is not None:
             self._attr_brightness = max(0, min(255, brightness))
+
         if ColorMode.COLOR_TEMP in color_modes and (
             color_temp := state.get_colortemp()
         ):
@@ -116,10 +133,11 @@ class WizBulbEntity(WizToggleEntity, LightEntity):
         elif ColorMode.RGBW in color_modes and (rgbw := state.get_rgbw()) is not None:
             self._attr_rgbw_color = rgbw
             self._attr_color_mode = ColorMode.RGBW
+
         self._attr_effect = state.get_scene()
         super()._async_update_attrs()
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Instruct the light to turn on."""
-        await self._device.turn_on(_async_pilot_builder(**kwargs))
+        await self._device.turn_on(_async_pilot_builder(self._channel, **kwargs))
         await self.coordinator.async_request_refresh()

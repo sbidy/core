@@ -24,7 +24,7 @@ class WizEntity(CoordinatorEntity[DataUpdateCoordinator[float | None]], Entity):
 
     _attr_has_entity_name = True
 
-    def __init__(self, wiz_data: WizData, name: str) -> None:
+    def __init__(self, wiz_data: WizData, name: str, device_id: int = 0) -> None:
         """Initialize a WiZ entity."""
         super().__init__(wiz_data.coordinator)
         self._device = wiz_data.bulb
@@ -44,6 +44,7 @@ class WizEntity(CoordinatorEntity[DataUpdateCoordinator[float | None]], Entity):
         hw_version = f"{board} {hw_data[0]}" if hw_data else board
         self._attr_device_info[ATTR_HW_VERSION] = hw_version
         self._attr_device_info[ATTR_MODEL] = model
+        self._device_id = device_id
 
     @callback
     def _handle_coordinator_update(self) -> None:
@@ -63,9 +64,9 @@ class WizToggleEntity(WizEntity, ToggleEntity):
     @callback
     def _async_update_attrs(self) -> None:
         """Handle updating _attr values."""
-        self._attr_is_on = self._device.status
+        self._attr_is_on = self._device.status(self._device_id)
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Instruct the device to turn off."""
-        await self._device.turn_off()
+        await self._device.turn_off(self._device_id)
         await self.coordinator.async_request_refresh()

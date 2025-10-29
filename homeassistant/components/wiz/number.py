@@ -46,7 +46,7 @@ NUMBERS: tuple[WizNumberEntityDescription, ...] = (
         native_min_value=10,
         native_max_value=200,
         native_step=1,
-        value_fn=lambda device: cast(int | None, device.state.get_speed()),
+        value_fn=lambda device: cast(int | None, device.state[0].get_speed()),
         set_value_fn=_async_set_speed,
         required_feature="effect",
         entity_category=EntityCategory.CONFIG,
@@ -57,7 +57,7 @@ NUMBERS: tuple[WizNumberEntityDescription, ...] = (
         native_min_value=0,
         native_max_value=100,
         native_step=1,
-        value_fn=lambda device: cast(int | None, device.state.get_ratio()),
+        value_fn=lambda device: cast(int | None, device.state[0].get_ratio()),
         set_value_fn=_async_set_ratio,
         required_feature="dual_head",
         entity_category=EntityCategory.CONFIG,
@@ -71,13 +71,40 @@ async def async_setup_entry(
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up the wiz speed number."""
-    async_add_entities(
-        WizSpeedNumber(entry.runtime_data, entry.title, description)
-        for description in NUMBERS
-        if getattr(
-            entry.runtime_data.bulb.bulbtype.features, description.required_feature
-        )
-    )
+    entities = []
+    bulb = entry.runtime_data.bulb
+
+    for description in NUMBERS:
+        if not hasattr(bulb.bulbtype.features, description.required_feature):
+            continue
+
+        if bulb.bulbtype.features.dual_head:
+            # Create two entities for dual head bulbs (head 0 and 1)
+            entities.extend(
+                [
+                    WizSpeedNumber(
+                        entry.runtime_data,
+                        f"{entry.title} - 1",
+                        description,
+                        device_id=0,
+                    ),
+                    WizSpeedNumber(
+                        entry.runtime_data,
+                        f"{entry.title} - 2",
+                        description,
+                        device_id=1,
+                    ),
+                ]
+            )
+        else:
+            # Create single entity for regular bulbs
+            entities.append(
+                WizSpeedNumber(
+                    entry.runtime_data, entry.title, description, device_id=0
+                )
+            )
+
+    async_add_entities(entities)
 
 
 class WizSpeedNumber(WizEntity, NumberEntity):
@@ -87,12 +114,16 @@ class WizSpeedNumber(WizEntity, NumberEntity):
     _attr_mode = NumberMode.SLIDER
 
     def __init__(
-        self, wiz_data: WizData, name: str, description: WizNumberEntityDescription
+        self,
+        wiz_data: WizData,
+        name: str,
+        description: WizNumberEntityDescription,
+        device_id: int,
     ) -> None:
         """Initialize an WiZ device."""
-        super().__init__(wiz_data, name)
+        super().__init__(wiz_data, name, device_id)
         self.entity_description = description
-        self._attr_unique_id = f"{self._device.mac}_{description.key}"
+        self._attr_unique_id = f"{self._device.mac}_{description.key}_{device_id}"
         self._async_update_attrs()
 
     @property
